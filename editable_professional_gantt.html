@@ -1,0 +1,516 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Editable Professional Gantt</title>
+
+<style>
+*{box-sizing:border-box}
+
+body{
+  margin:0;
+  font-family:Arial,sans-serif;
+  background:#f3f4f6;
+}
+
+header{
+  height:64px;
+  background:#111827;
+  color:white;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  padding:0 20px;
+}
+
+header h1{
+  margin:0;
+  font-size:22px;
+}
+
+.toolbar{
+  display:flex;
+  gap:10px;
+}
+
+button{
+  border:none;
+  background:#2563eb;
+  color:white;
+  padding:10px 14px;
+  border-radius:8px;
+  cursor:pointer;
+  font-weight:bold;
+}
+
+button:hover{
+  opacity:.9;
+}
+
+.main{
+  display:flex;
+  height:calc(100vh - 64px);
+}
+
+.sidebar{
+  width:280px;
+  background:white;
+  border-right:1px solid #ddd;
+  overflow:auto;
+}
+
+.timeline{
+  flex:1;
+  overflow:auto;
+  background:white;
+  position:relative;
+}
+
+.task-side{
+  height:52px;
+  border-bottom:1px solid #eee;
+  display:flex;
+  align-items:center;
+  padding:0 12px;
+  gap:8px;
+}
+
+.task-input{
+  width:100%;
+  border:none;
+  background:transparent;
+  font-size:14px;
+  font-weight:600;
+  outline:none;
+}
+
+.delete-btn{
+  background:#ef4444;
+  color:white;
+  border:none;
+  width:24px;
+  height:24px;
+  border-radius:6px;
+  cursor:pointer;
+}
+
+.grid{
+  position:relative;
+  min-width:2400px;
+}
+
+.header-row{
+  display:flex;
+  position:sticky;
+  top:0;
+  z-index:20;
+  background:#f8fafc;
+}
+
+.day{
+  width:50px;
+  min-width:50px;
+  text-align:center;
+  padding:10px 0;
+  border-right:1px solid #eee;
+  border-bottom:1px solid #ddd;
+  font-size:12px;
+}
+
+.row{
+  position:relative;
+  height:52px;
+  border-bottom:1px solid #eee;
+}
+
+.cell{
+  position:absolute;
+  top:0;
+  bottom:0;
+  border-right:1px solid #f3f3f3;
+}
+
+.taskbar{
+  position:absolute;
+  top:8px;
+  height:36px;
+  border-radius:10px;
+  display:flex;
+  align-items:center;
+  padding:0 10px;
+  color:white;
+  font-size:13px;
+  font-weight:bold;
+  cursor:grab;
+  user-select:none;
+  box-shadow:0 3px 8px rgba(0,0,0,.18);
+}
+
+.taskbar:active{
+  cursor:grabbing;
+}
+
+.resize{
+  position:absolute;
+  top:0;
+  bottom:0;
+  width:8px;
+  cursor:ew-resize;
+}
+
+.left{left:0}
+.right{right:0}
+
+.progress{
+  position:absolute;
+  top:0;
+  left:0;
+  bottom:0;
+  background:rgba(255,255,255,.25);
+  border-radius:10px 0 0 10px;
+}
+
+svg{
+  position:absolute;
+  inset:0;
+  pointer-events:none;
+}
+
+.footer{
+  position:absolute;
+  right:20px;
+  bottom:20px;
+  background:#111827;
+  color:white;
+  padding:8px 12px;
+  border-radius:10px;
+  font-size:12px;
+}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Editable Professional Gantt</h1>
+
+  <div class="toolbar">
+    <button onclick="addTask()">新增任務</button>
+    <button onclick="saveData()">儲存</button>
+    <button onclick="resetData()">重置</button>
+  </div>
+</header>
+
+<div class="main">
+
+  <div class="sidebar" id="sidebar"></div>
+
+  <div class="timeline">
+    <div class="grid" id="grid"></div>
+    <svg id="svg"></svg>
+    <div class="footer">拖拉 / 調整長度 / 任務名稱可自由編輯</div>
+  </div>
+
+</div>
+
+<script>
+
+const DAY_WIDTH = 50;
+
+const defaultTasks = [
+  {id:1,name:"需求分析",start:1,duration:4,color:"#ef4444",progress:60,depends:null},
+  {id:2,name:"UI 設計",start:6,duration:5,color:"#3b82f6",progress:35,depends:1},
+  {id:3,name:"前端開發",start:12,duration:7,color:"#10b981",progress:20,depends:2},
+  {id:4,name:"測試驗證",start:21,duration:4,color:"#8b5cf6",progress:5,depends:3},
+];
+
+let tasks = JSON.parse(localStorage.getItem("editable-gantt")) || defaultTasks;
+
+const sidebar = document.getElementById("sidebar");
+const grid = document.getElementById("grid");
+const svg = document.getElementById("svg");
+
+function render(){
+
+  sidebar.innerHTML="";
+  grid.innerHTML="";
+  svg.innerHTML=`
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L9,3 z" fill="#64748b"></path>
+    </marker>
+  </defs>`;
+
+  const header = document.createElement("div");
+  header.className="header-row";
+
+  for(let i=1;i<=60;i++){
+    const d=document.createElement("div");
+    d.className="day";
+    d.textContent=i;
+    header.appendChild(d);
+  }
+
+  grid.appendChild(header);
+
+  tasks.forEach((task,rowIndex)=>{
+
+    const side = document.createElement("div");
+    side.className="task-side";
+
+    const input = document.createElement("input");
+    input.className="task-input";
+    input.value = task.name;
+
+    input.addEventListener("input",(e)=>{
+      task.name = e.target.value;
+      render();
+    });
+
+    const del = document.createElement("button");
+    del.className="delete-btn";
+    del.textContent="×";
+
+    del.onclick=()=>{
+      tasks = tasks.filter(t=>t.id!==task.id);
+      render();
+    };
+
+    side.appendChild(input);
+    side.appendChild(del);
+
+    sidebar.appendChild(side);
+
+    const row = document.createElement("div");
+    row.className="row";
+
+    for(let i=0;i<60;i++){
+      const c=document.createElement("div");
+      c.className="cell";
+      c.style.left=(i*DAY_WIDTH)+"px";
+      c.style.width=DAY_WIDTH+"px";
+      row.appendChild(c);
+    }
+
+    const bar=document.createElement("div");
+    bar.className="taskbar";
+    bar.style.left=((task.start-1)*DAY_WIDTH)+"px";
+    bar.style.width=(task.duration*DAY_WIDTH)+"px";
+    bar.style.background=task.color;
+
+    const progress=document.createElement("div");
+    progress.className="progress";
+    progress.style.width=task.progress+"%";
+
+    const left=document.createElement("div");
+    left.className="resize left";
+
+    const right=document.createElement("div");
+    right.className="resize right";
+
+    const label=document.createElement("div");
+    label.innerText=task.name;
+
+    bar.appendChild(progress);
+    bar.appendChild(label);
+    bar.appendChild(left);
+    bar.appendChild(right);
+
+    enableDrag(bar,task);
+    enableResize(task,left,right);
+
+    row.appendChild(bar);
+
+    grid.appendChild(row);
+  });
+
+  drawDependencies();
+}
+
+function drawDependencies(){
+
+  tasks.forEach((task,index)=>{
+
+    if(!task.depends) return;
+
+    const parent = tasks.find(t=>t.id===task.depends);
+
+    if(!parent) return;
+
+    const pIndex = tasks.indexOf(parent);
+
+    const x1 = (parent.start + parent.duration) * DAY_WIDTH;
+    const y1 = 78 + pIndex * 52;
+
+    const x2 = (task.start - 1) * DAY_WIDTH;
+    const y2 = 78 + index * 52;
+
+    const path=document.createElementNS("http://www.w3.org/2000/svg","path");
+
+    path.setAttribute("d",`
+      M ${x1} ${y1}
+      L ${x1+20} ${y1}
+      L ${x1+20} ${y2}
+      L ${x2} ${y2}
+    `);
+
+    path.setAttribute("stroke","#64748b");
+    path.setAttribute("fill","none");
+    path.setAttribute("stroke-width","2");
+    path.setAttribute("marker-end","url(#arrow)");
+
+    svg.appendChild(path);
+  });
+}
+
+function enableDrag(bar,task){
+
+  let startX;
+  let original;
+
+  bar.addEventListener("mousedown",(e)=>{
+
+    if(e.target.classList.contains("resize")) return;
+
+    startX=e.clientX;
+    original=task.start;
+
+    const move=(ev)=>{
+
+      const dx=ev.clientX-startX;
+      const days=Math.round(dx/DAY_WIDTH);
+
+      task.start=Math.max(1,original+days);
+
+      sync(task.id);
+
+      render();
+    };
+
+    const up=()=>{
+      window.removeEventListener("mousemove",move);
+      window.removeEventListener("mouseup",up);
+    };
+
+    window.addEventListener("mousemove",move);
+    window.addEventListener("mouseup",up);
+  });
+}
+
+function enableResize(task,left,right){
+
+  left.addEventListener("mousedown",(e)=>{
+
+    e.stopPropagation();
+
+    const startX=e.clientX;
+    const originalStart=task.start;
+    const originalDuration=task.duration;
+
+    const move=(ev)=>{
+
+      const dx=ev.clientX-startX;
+      const days=Math.round(dx/DAY_WIDTH);
+
+      const newDuration=originalDuration-days;
+
+      if(newDuration<1) return;
+
+      task.start=originalStart+days;
+      task.duration=newDuration;
+
+      sync(task.id);
+
+      render();
+    };
+
+    const up=()=>{
+      window.removeEventListener("mousemove",move);
+      window.removeEventListener("mouseup",up);
+    };
+
+    window.addEventListener("mousemove",move);
+    window.addEventListener("mouseup",up);
+  });
+
+  right.addEventListener("mousedown",(e)=>{
+
+    e.stopPropagation();
+
+    const startX=e.clientX;
+    const originalDuration=task.duration;
+
+    const move=(ev)=>{
+
+      const dx=ev.clientX-startX;
+      const days=Math.round(dx/DAY_WIDTH);
+
+      task.duration=Math.max(1,originalDuration+days);
+
+      sync(task.id);
+
+      render();
+    };
+
+    const up=()=>{
+      window.removeEventListener("mousemove",move);
+      window.removeEventListener("mouseup",up);
+    };
+
+    window.addEventListener("mousemove",move);
+    window.addEventListener("mouseup",up);
+  });
+}
+
+function sync(id){
+
+  const parent = tasks.find(t=>t.id===id);
+
+  tasks.forEach(t=>{
+
+    if(t.depends===id){
+
+      t.start = parent.start + parent.duration + 1;
+
+      sync(t.id);
+    }
+  });
+}
+
+function addTask(){
+
+  const id = Date.now();
+
+  tasks.push({
+    id,
+    name:"新任務",
+    start:1,
+    duration:3,
+    color:"#0ea5e9",
+    progress:0,
+    depends:null
+  });
+
+  render();
+}
+
+function saveData(){
+
+  localStorage.setItem("editable-gantt",JSON.stringify(tasks));
+
+  alert("已儲存");
+}
+
+function resetData(){
+
+  localStorage.removeItem("editable-gantt");
+
+  location.reload();
+}
+
+render();
+
+</script>
+
+</body>
+</html>
